@@ -16,6 +16,7 @@ app.secret_key = 'your-secret-key-here-change-in-production'
 # 数据文件路径
 QUESTIONS_FILE = 'full_questions.json'
 USER_DATA_FILE = os.environ.get('USER_DATA_FILE', 'user_data.json')
+DB_URL = os.environ.get('DATABASE_URL') or os.environ.get('POSTGRES_URL') or os.environ.get('PG_URL')
 
 # 检查是否在Railway环境中
 IS_RAILWAY = os.environ.get('RAILWAY_ENVIRONMENT') is not None
@@ -29,6 +30,61 @@ CACHE_DURATION = 300  # 缓存5分钟
 DATA_DIR = os.path.dirname(USER_DATA_FILE) if os.path.dirname(USER_DATA_FILE) else '.'
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR, exist_ok=True)
+
+# 简易数据库KV持久化（可选：当配置了 DATABASE_URL 时启用）
+_db_conn = None
+
+def get_db_conn():
+    global _db_conn
+    if not DB_URL:
+        return None
+    try:
+        import psycopg2
+        if _db_conn is None or _db_conn.closed:
+            # Railway Postgres 通常需要 SSL，若 URL 已含 sslmode 则尊重之
+            _db_conn = psycopg2.connect(DB_URL)
+            with _db_conn.cursor() as cur:
+                cur.execute("CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT)")
+                _db_conn.commit()
+        return _db_conn
+    except Exception as e:
+        print(f"DB unavailable: {e}")
+        return None
+
+def db_load_json(key: str):
+    conn = get_db_conn()
+    if not conn:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT value FROM kv_store WHERE key=%s", (key,))
+            row = cur.fetchone()
+            if row and row[0]:
+                try:
+                    return json.loads(row[0])
+                except Exception:
+                    return None
+    except Exception as e:
+        print(f"DB load error: {e}")
+    return None
+
+def db_save_json(key: str, obj) -> bool:
+    conn = get_db_conn()
+    if not conn:
+        return False
+    try:
+        payload = json.dumps(obj, ensure_ascii=False, default=str)
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO kv_store(key, value) VALUES(%s, %s)"
+                " ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                (key, payload)
+            )
+            conn.commit()
+        return True
+    except Exception as e:
+        print(f"DB save error: {e}")
+        return False
 
 def load_questions():
     """加载题目数据（带缓存）"""
@@ -71,6 +127,10 @@ def load_questions():
 
 def load_user_data():
     """加载用户数据"""
+    # 优先从数据库读取（如已配置）
+    db_data = db_load_json('user_data')
+    if db_data:
+        return db_data
     # 在Railway环境中，优先从持久化存储读取
     if IS_RAILWAY:
         # 尝试从持久化卷读取
@@ -78,7 +138,11 @@ def load_user_data():
         if os.path.exists(persistent_file):
             try:
                 with open(persistent_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+                    file_data = json.load(f)
+                    # 若DB可用但暂无数据，则用文件数据回填数据库
+                    if get_db_conn() and not db_data:
+                        db_save_json('user_data', file_data)
+                    return file_data
             except Exception as e:
                 print(f"Warning: Failed to load from persistent storage: {e}")
         
@@ -93,7 +157,11 @@ def load_user_data():
     # 从本地文件读取
     if os.path.exists(USER_DATA_FILE):
         with open(USER_DATA_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            file_data = json.load(f)
+            # 若DB可用但暂无数据，则用文件数据回填数据库
+            if get_db_conn() and not db_data:
+                db_save_json('user_data', file_data)
+            return file_data
     
     return {
         'users': {},
@@ -113,6 +181,13 @@ def save_user_data(data):
         if 'important_questions' in data['users'][user_id]:
             data['users'][user_id]['important_questions'] = list(data['users'][user_id]['important_questions'])
     
+    # 若数据库可用，同时写入数据库
+    try:
+        if get_db_conn():
+            db_save_json('user_data', data)
+    except Exception as e:
+        print(f"Warning: failed to persist to DB: {e}")
+
     # 在Railway环境中，保存到持久化存储
     if IS_RAILWAY:
         try:
@@ -633,10 +708,7 @@ def important_bank():
     """重点题库页面"""
     return render_template('important_bank.html')
 
-@app.route('/test_simple')
-def test_simple():
-    """简单测试页面"""
-    return render_template('test_simple.html')
+# 已移除调试页面 /test_simple，避免因缺失模板造成错误
 
 @app.route('/get_wrong_questions', methods=['POST'])
 @require_login
