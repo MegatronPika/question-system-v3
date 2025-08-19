@@ -130,6 +130,34 @@ def load_questions():
             # 否则返回空列表
             return []
 
+def normalize_user_data(data):
+    """标准化用户数据结构，将list转换为set"""
+    if not data or 'users' not in data:
+        return data
+    
+    for user_id in data['users']:
+        user = data['users'][user_id]
+        # 将list转换为set
+        if 'answered_questions' in user and isinstance(user['answered_questions'], list):
+            user['answered_questions'] = set(user['answered_questions'])
+        if 'wrong_questions' in user and isinstance(user['wrong_questions'], list):
+            user['wrong_questions'] = set(user['wrong_questions'])
+        if 'important_questions' in user and isinstance(user['important_questions'], list):
+            # 规范化important_questions的ID类型
+            imp_list = user['important_questions']
+            norm_set = set()
+            for v in imp_list:
+                if isinstance(v, str) and v.isdigit():
+                    try:
+                        norm_set.add(int(v))
+                    except Exception:
+                        norm_set.add(v)
+                else:
+                    norm_set.add(v)
+            user['important_questions'] = norm_set
+    
+    return data
+
 def load_user_data():
     """加载用户数据"""
     # 优先从数据库读取（如已配置）
@@ -161,7 +189,7 @@ def load_user_data():
             except Exception as e:
                 print(f"Warning: Failed to sync DB data to persistent storage: {e}")
         
-        return db_data
+        return normalize_user_data(db_data)
     
     # 数据库没有数据，尝试从其他源加载
     if IS_RAILWAY:
@@ -175,7 +203,7 @@ def load_user_data():
                     if get_db_conn():
                         db_save_json('user_data', file_data)
                         print("Synced persistent storage data to database")
-                    return file_data
+                    return normalize_user_data(file_data)
             except Exception as e:
                 print(f"Warning: Failed to load from persistent storage: {e}")
         
@@ -188,7 +216,7 @@ def load_user_data():
                 if get_db_conn():
                     db_save_json('user_data', env_data_parsed)
                     print("Synced environment variable data to database")
-                return env_data_parsed
+                return normalize_user_data(env_data_parsed)
             except json.JSONDecodeError:
                 print("Warning: Invalid JSON in USER_DATA_JSON environment variable")
     else:
@@ -201,7 +229,7 @@ def load_user_data():
                     if get_db_conn():
                         db_save_json('user_data', file_data)
                         print("Synced local file data to database")
-                    return file_data
+                    return normalize_user_data(file_data)
             except Exception as e:
                 print(f"Warning: Failed to load from local file: {e}")
     
@@ -273,6 +301,10 @@ def save_user_data(data):
     # 如果数据库保存失败且不在Railway环境，记录警告
     if not db_saved and not IS_RAILWAY:
         print("Warning: Database not available, data only saved to local file")
+    
+    # 清除所有用户统计缓存（数据已更新）
+    global _user_stats_cache
+    _user_stats_cache.clear()
 
 def get_client_ip():
     """获取客户端IP"""
@@ -311,28 +343,15 @@ def get_user_data():
     if not user_id or user_id not in user_data['users']:
         return None, None
     
-    # 将list转换回set
-    if 'answered_questions' in user_data['users'][user_id]:
-        user_data['users'][user_id]['answered_questions'] = set(user_data['users'][user_id]['answered_questions'])
-    if 'wrong_questions' in user_data['users'][user_id]:
-        user_data['users'][user_id]['wrong_questions'] = set(user_data['users'][user_id]['wrong_questions'])
-    if 'important_questions' in user_data['users'][user_id]:
-        # 转回 set 并规范化为整型ID（若可转换）
-        imp_src = user_data['users'][user_id]['important_questions']
-        try:
-            iter_values = list(imp_src)
-        except TypeError:
-            iter_values = []
-        norm_set = set()
-        for v in iter_values:
-            if isinstance(v, str) and v.isdigit():
-                try:
-                    norm_set.add(int(v))
-                except Exception:
-                    norm_set.add(v)
-            else:
-                norm_set.add(v)
-        user_data['users'][user_id]['important_questions'] = norm_set
+    # 确保用户数据结构完整
+    if 'answered_questions' not in user_data['users'][user_id]:
+        user_data['users'][user_id]['answered_questions'] = set()
+    if 'wrong_questions' not in user_data['users'][user_id]:
+        user_data['users'][user_id]['wrong_questions'] = set()
+    if 'important_questions' not in user_data['users'][user_id]:
+        user_data['users'][user_id]['important_questions'] = set()
+    if 'wrong_count' not in user_data['users'][user_id]:
+        user_data['users'][user_id]['wrong_count'] = {}
     
     if user_id not in user_data['wrong_questions']:
         user_data['wrong_questions'][user_id] = []
@@ -836,6 +855,12 @@ def submit_exam():
     # 将答案存入记录并统一评分与结算
     exam_record['answers'] = answers
     total_score, wrong_answers = _finalize_exam_from_record(user_data, user_id, exam_record)
+    
+    # 清除用户统计缓存（数据已更新）
+    global _user_stats_cache
+    if user_id in _user_stats_cache:
+        del _user_stats_cache[user_id]
+    
     return jsonify({'total_score': total_score, 'wrong_answers': wrong_answers})
 
 @app.route('/save_exam_progress', methods=['POST'])
@@ -1274,6 +1299,60 @@ def toggle_important():
     
     save_user_data(user_data)
     return jsonify({'success': True, 'is_important': mark})
+
+def get_user_stats_cached(user_id):
+    """获取用户统计数据（带缓存）"""
+    global _user_stats_cache, _user_stats_cache_time
+    current_time = time.time()
+    
+    # 检查缓存是否有效
+    if (user_id in _user_stats_cache and 
+        current_time - _user_stats_cache_time.get(user_id, 0) < USER_STATS_CACHE_DURATION):
+        return _user_stats_cache[user_id]
+    
+    # 缓存过期或不存在，重新计算
+    user_data, _ = get_user_data()
+    if not user_data or user_id not in user_data['users']:
+        return None
+    
+    # 确保用户数据结构完整
+    if 'answered_questions' not in user_data['users'][user_id]:
+        user_data['users'][user_id]['answered_questions'] = set()
+    if 'wrong_questions' not in user_data['users'][user_id]:
+        user_data['users'][user_id]['wrong_questions'] = set()
+    if 'important_questions' not in user_data['users'][user_id]:
+        user_data['users'][user_id]['important_questions'] = set()
+    if 'wrong_count' not in user_data['users'][user_id]:
+        user_data['users'][user_id]['wrong_count'] = {}
+    
+    answered_questions = set(user_data['users'][user_id]['answered_questions'])
+    wrong_questions_set = set(user_data['users'][user_id]['wrong_questions'])
+    important_set = set(user_data['users'][user_id]['important_questions'])
+    wrong_records = user_data['wrong_questions'].get(user_id, [])
+    exam_records = user_data['exam_records'].get(user_id, [])
+    
+    # 计算错题次数和时间
+    wrong_times = {}
+    wrong_count_map = {}
+    for record in wrong_records:
+        qid = record['question_id']
+        wrong_times.setdefault(qid, record['timestamp'])
+        wrong_count_map[qid] = wrong_count_map.get(qid, 0) + 1
+    
+    stats = {
+        'answered_questions': answered_questions,
+        'wrong_questions': wrong_questions_set,
+        'important_questions': important_set,
+        'wrong_count_map': wrong_count_map,
+        'wrong_times': wrong_times,
+        'exam_records': exam_records
+    }
+    
+    # 更新缓存
+    _user_stats_cache[user_id] = stats
+    _user_stats_cache_time[user_id] = current_time
+    
+    return stats
 
 @app.route('/get_user_stats', methods=['POST'])
 @require_login
