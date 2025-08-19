@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+
+{% block title %}主页 - 金融业数字化转型技能大赛题库系统{% endblock %}
+
+{% block content %}
+<div class="text-center">
+    <h1 class="display-4 mb-4">
+        <i class="fas fa-graduation-cap text-primary"></i>
+        金融业数字化转型技能大赛题库系统
+    </h1>
+    <p class="lead mb-5">欢迎使用在线题库练习系统，提升您的专业技能！</p>
+    
+    <div class="alert alert-info">
+        <i class="fas fa-user"></i>
+        欢迎，<strong>{{ session.user_id }}</strong>！
+        <a href="/profile" class="btn btn-sm btn-outline-primary ms-2">
+            <i class="fas fa-user-cog"></i> 个人资料
+        </a>
+        <a href="/logout" class="btn btn-sm btn-outline-danger ms-2">
+            <i class="fas fa-sign-out-alt"></i> 退出登录
+        </a>
+    </div>
+    
+    <div class="row justify-content-center">
+        <div class="col-md-3">
+            <div class="card h-100 shadow">
+                <div class="card-body text-center">
+                    <i class="fas fa-random fa-3x text-primary mb-3"></i>
+                    <h5 class="card-title">随机做题</h5>
+                    <p class="card-text">选择做题模式，随机练习题目，提升答题能力</p>
+                    <a href="/random_practice" class="btn btn-custom">
+                        <i class="fas fa-play"></i> 开始做题
+                    </a>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card h-100 shadow">
+                <div class="card-body text-center">
+                    <i class="fas fa-file-alt fa-3x text-success mb-3"></i>
+                    <h5 class="card-title">模拟考试</h5>
+                    <p class="card-text">150道题目，1小时限时，模拟真实考试环境</p>
+                    <a href="/exam" class="btn btn-custom">
+                        <i class="fas fa-clock"></i> 开始考试
+                    </a>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card h-100 shadow">
+                <div class="card-body text-center">
+                    <i class="fas fa-book fa-3x text-info mb-3"></i>
+                    <h5 class="card-title">全量题库</h5>
+                    <p class="card-text">查看所有题目状态，按题型分类，多种筛选排序</p>
+                    <a href="/question_bank" class="btn btn-custom">
+                        <i class="fas fa-search"></i> 查看题库
+                    </a>
+                </div>
+            </div>
+        </div>
+        
+    </div>
+    
+    <div class="mt-5">
+        <h3 class="mb-3">系统特色</h3>
+        <div class="row">
+            <div class="col-md-6">
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item">
+                        <i class="fas fa-check text-success"></i>
+                        <strong>智能题库管理</strong> - 支持全量题库、未做题库、错题库三种模式
+                    </li>
+                    <li class="list-group-item">
+                        <i class="fas fa-check text-success"></i>
+                        <strong>实时答题反馈</strong> - 立即显示答案正确性和详细解析
+                    </li>
+                    <li class="list-group-item">
+                        <i class="fas fa-check text-success"></i>
+                        <strong>错题自动记录</strong> - 自动统计错题次数和做错时间
+                    </li>
+                </ul>
+            </div>
+            <div class="col-md-6">
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item">
+                        <i class="fas fa-check text-success"></i>
+                        <strong>模拟考试系统</strong> - 150道题目，1小时限时，真实考试体验
+                    </li>
+                    <li class="list-group-item">
+                        <i class="fas fa-check text-success"></i>
+                        <strong>多维度排序</strong> - 按时间、错题次数、题目编号排序
+                    </li>
+                    <li class="list-group-item">
+                        <i class="fas fa-check text-success"></i>
+                        <strong>题型分类展示</strong> - 单选题、多选题、判断题分类管理
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

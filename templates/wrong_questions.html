@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+
+{% block title %}错题记录 - 金融业数字化转型技能大赛题库系统{% endblock %}
+
+{% block content %}
+<div class="text-center mb-4">
+    <h2>
+        <i class="fas fa-exclamation-triangle text-warning"></i>
+        错题记录
+    </h2>
+    
+    <div class="row justify-content-center">
+        <div class="col-md-6">
+            <div class="input-group">
+                <label class="input-group-text">排序方式</label>
+                <select class="form-select" id="sort-select" onchange="loadWrongQuestions()">
+                    <option value="timestamp">按第一次做错时间</option>
+                    <option value="count">按累计做错次数</option>
+                    <option value="id">按题库编号</option>
+                </select>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="loading" class="text-center">
+    <div class="spinner-border text-primary" role="status">
+        <span class="visually-hidden">加载中...</span>
+    </div>
+    <p class="mt-2">正在加载错题记录...</p>
+</div>
+
+<div id="content" class="d-none">
+    <div class="row">
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">
+                        <i class="fas fa-list"></i> 单选题
+                        <span class="badge bg-light text-primary" id="single-count">0</span>
+                    </h5>
+                </div>
+                <div class="card-body" id="single-choice-list">
+                    <!-- 单选题错题列表 -->
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header bg-success text-white">
+                    <h5 class="mb-0">
+                        <i class="fas fa-list"></i> 多选题
+                        <span class="badge bg-light text-success" id="multi-count">0</span>
+                    </h5>
+                </div>
+                <div class="card-body" id="multi-choice-list">
+                    <!-- 多选题错题列表 -->
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0">
+                        <i class="fas fa-list"></i> 判断题
+                        <span class="badge bg-light text-warning" id="true-false-count">0</span>
+                    </h5>
+                </div>
+                <div class="card-body" id="true-false-list">
+                    <!-- 判断题错题列表 -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 错题详情模态框 -->
+<div class="modal fade" id="wrongDetailModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">错题详情</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="wrong-detail-content">
+                <!-- 错题详情内容 -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="text-center mt-4">
+    <a href="/" class="btn btn-secondary">
+        <i class="fas fa-home"></i> 返回主页
+    </a>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+$(document).ready(function() {
+    loadWrongQuestions();
+});
+
+function loadWrongQuestions() {
+    $('#loading').removeClass('d-none');
+    $('#content').addClass('d-none');
+    
+    const sortBy = $('#sort-select').val();
+    
+    $.ajax({
+        url: '/get_wrong_questions',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({ sort_by: sortBy }),
+        success: function(response) {
+            displayWrongQuestions(response);
+            $('#loading').addClass('d-none');
+            $('#content').removeClass('d-none');
+        },
+        error: function() {
+            alert('加载错题记录失败，请重试');
+            $('#loading').addClass('d-none');
+        }
+    });
+}
+
+function displayWrongQuestions(data) {
+    // 显示单选题错题
+    displayQuestionList('single-choice-list', data.single_choice, 'primary');
+    $('#single-count').text(data.single_choice.length);
+    
+    // 显示多选题错题
+    displayQuestionList('multi-choice-list', data.multi_choice, 'success');
+    $('#multi-count').text(data.multi_choice.length);
+    
+    // 显示判断题错题
+    displayQuestionList('true-false-list', data.true_false, 'warning');
+    $('#true-false-count').text(data.true_false.length);
+}
+
+function displayQuestionList(containerId, questions, colorClass) {
+    const container = $(`#${containerId}`);
+    container.empty();
+    
+    if (questions.length === 0) {
+        container.html('<p class="text-muted">暂无错题记录</p>');
+        return;
+    }
+    
+    questions.forEach((wrong, index) => {
+        const date = new Date(wrong.timestamp).toLocaleDateString('zh-CN');
+        const time = new Date(wrong.timestamp).toLocaleTimeString('zh-CN');
+        
+        const questionHtml = `
+            <div class="card mb-2 border-${colorClass}">
+                <div class="card-body p-2">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div class="flex-grow-1">
+                            <small class="text-muted">${date} ${time}</small>
+                            <p class="mb-1 small">${wrong.question_content.substring(0, 50)}...</p>
+                            <div class="small">
+                                <span class="badge bg-danger">您的答案: ${wrong.user_answer || '未作答'}</span>
+                                <span class="badge bg-success">正确答案: ${wrong.correct_answer}</span>
+                                <span class="badge bg-info">编号: ${wrong.number ?? wrong.question_id}</span>
+                                <span class="badge bg-warning">做错次数: ${wrong.wrong_count}</span>
+                            </div>
+                        </div>
+                        <button class="btn btn-sm btn-outline-${colorClass}" onclick="showWrongDetail(${JSON.stringify(wrong).replace(/"/g, '&quot;')})">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+        container.append(questionHtml);
+    });
+}
+
+function showWrongDetail(wrong) {
+    const date = new Date(wrong.timestamp).toLocaleString('zh-CN');
+    
+    // 生成选项HTML
+    let optionsHtml = '';
+    if (wrong.options && wrong.options.length > 0) {
+        optionsHtml = '<div class="mb-3"><h6>选项</h6>';
+        wrong.options.forEach(option => {
+            const isCorrect = option.is_correct ? 'text-success fw-bold' : 'text-muted';
+            const icon = option.is_correct ? '<i class="fas fa-check-circle"></i> ' : '<i class="fas fa-circle"></i> ';
+            optionsHtml += `<p class="${isCorrect}">${icon}${option.tag}. ${option.content}</p>`;
+        });
+        optionsHtml += '</div>';
+    }
+    
+    const detailHtml = `
+        <div class="mb-3">
+            <h6>题目内容</h6>
+            <p>${wrong.full_content || wrong.question_content}</p>
+        </div>
+        
+        ${optionsHtml}
+        
+        <div class="row mb-3">
+            <div class="col-md-4">
+                <div class="alert alert-danger">
+                    <strong>您的答案：</strong> ${wrong.user_answer || '未作答'}
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="alert alert-success">
+                    <strong>正确答案：</strong> ${wrong.correct_answer}
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="alert alert-warning">
+                    <strong>做错次数：</strong> ${wrong.wrong_count}
+                </div>
+            </div>
+        </div>
+        
+        <div class="mb-3">
+            <h6>解析</h6>
+            <p>${wrong.analysis || '暂无解析'}</p>
+        </div>
+        
+        <div class="text-muted">
+            <small>做错时间：${date}</small><br>
+            <small>题目类型：${getTypeName(wrong.type)}</small><br>
+            <small>题目ID：${wrong.question_id}</small>
+        </div>
+    `;
+    
+    $('#wrong-detail-content').html(detailHtml);
+    $('#wrongDetailModal').modal('show');
+}
+
+function getTypeName(type) {
+    const types = {
+        1: '单选题',
+        2: '多选题',
+        3: '判断题'
+    };
+    return types[type] || '未知类型';
+}
+</script>
+{% endblock %} 

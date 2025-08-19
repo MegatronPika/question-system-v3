@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block title %}用户登录 - 金融业数字化转型技能大赛题库系统{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6 col-lg-4">
+        <div class="card shadow">
+            <div class="card-body text-center">
+                <h2 class="mb-4">
+                    <i class="fas fa-user-circle text-primary"></i>
+                    用户登录
+                </h2>
+                
+                <form id="loginForm">
+                    <div class="mb-3">
+                        <label for="username" class="form-label">用户名</label>
+                        <input type="text" class="form-control" id="username" name="username" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="password" class="form-label">密码</label>
+                        <input type="password" class="form-control" id="password" name="password" required>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-custom w-100">
+                        <i class="fas fa-sign-in-alt"></i> 登录
+                    </button>
+                </form>
+                
+                <div class="mt-3">
+                    <p>还没有账号？ <a href="/register" class="text-primary">立即注册</a></p>
+                </div>
+                
+                <div id="message" class="alert mt-3" style="display: none;"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+$(document).ready(function() {
+    $('#loginForm').on('submit', function(e) {
+        e.preventDefault();
+        
+        const username = $('#username').val().trim();
+        const password = $('#password').val();
+        
+        if (!username || !password) {
+            showMessage('请填写用户名和密码', 'danger');
+            return;
+        }
+        
+        $.ajax({
+            url: '/login',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                username: username,
+                password: password
+            }),
+            success: function(response) {
+                if (response.success) {
+                    showMessage(response.message, 'success');
+                    setTimeout(function() {
+                        window.location.href = '/';
+                    }, 1000);
+                } else {
+                    showMessage(response.message, 'danger');
+                }
+            },
+            error: function() {
+                showMessage('登录失败，请重试', 'danger');
+            }
+        });
+    });
+});
+
+function showMessage(message, type) {
+    $('#message')
+        .removeClass('alert-success alert-danger')
+        .addClass('alert-' + type)
+        .text(message)
+        .show();
+}
+</script>
+{% endblock %} 

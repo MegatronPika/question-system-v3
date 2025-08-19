@@ -1,0 +1,517 @@
+{% extends "base.html" %}
+
+{% block title %}全量题库 - 金融业数字化转型技能大赛题库系统{% endblock %}
+
+{% block content %}
+<div class="text-center mb-4">
+    <h2>
+        <i class="fas fa-book text-primary"></i>
+        全量题库
+    </h2>
+    
+    <div class="row justify-content-center mb-3">
+        <div class="col-md-8">
+            <div class="row">
+                <div class="col-md-4">
+                    <div class="input-group">
+                        <label class="input-group-text">题型</label>
+                                        <select class="form-select" id="type-filter" onchange="loadQuestionBank(1)">
+                    <option value="all" selected>所有题型</option>
+                    <option value="1">单选题</option>
+                    <option value="2">多选题</option>
+                    <option value="3">判断题</option>
+                </select>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="input-group">
+                        <label class="input-group-text">状态</label>
+                                        <select class="form-select" id="status-filter" onchange="loadQuestionBank(1)">
+                    <option value="all" selected>所有题目</option>
+                    <option value="unanswered">未做题</option>
+                    <option value="correct">做对题</option>
+                    <option value="wrong">错题</option>
+                    <option value="frequent_wrong">常错题</option>
+                    <option value="important">重点题</option>
+                </select>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="input-group">
+                        <label class="input-group-text">排序</label>
+                                        <select class="form-select" id="sort-select" onchange="loadQuestionBank(1)">
+                    <option value="id">按题号</option>
+                    <option value="wrong_count">按做错次数</option>
+                    <option value="last_answered">按最后做题时间</option>
+                </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="loading" class="text-center">
+    <div class="spinner-border text-primary" role="status">
+        <span class="visually-hidden">加载中...</span>
+    </div>
+    <p class="mt-2">正在加载题库...</p>
+</div>
+
+<div id="content" class="d-none">
+    <div id="question-bank-container">
+        <!-- 动态生成题型卡片 -->
+    </div>
+    
+    <div class="mt-4">
+        <div id="pagination-single" class="mb-3"></div>
+        <div id="pagination-multi" class="mb-3"></div>
+        <div id="pagination-true-false" class="mb-3"></div>
+    </div>
+</div>
+
+<!-- 题目详情模态框 -->
+<div class="modal fade" id="questionDetailModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">题目详情</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="question-detail-content">
+                <!-- 题目详情内容 -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="text-center mt-4">
+    <a href="/" class="btn btn-secondary">
+        <i class="fas fa-home"></i> 返回主页
+    </a>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+$(document).ready(function() {
+    loadQuestionBank();
+});
+
+let currentPage = 1;
+
+function loadQuestionBank(page = 1) {
+    currentPage = page;
+    $('#loading').removeClass('d-none');
+    $('#content').addClass('d-none');
+    
+    const typeFilter = $('#type-filter').val();
+    const statusFilter = $('#status-filter').val();
+    const sortBy = $('#sort-select').val();
+    
+    $.ajax({
+        url: '/get_question_bank',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({ 
+            type_filter: typeFilter,
+            status_filter: statusFilter,
+            sort_by: sortBy,
+            page: page,
+            page_size: 100
+        }),
+        success: function(response) {
+            console.log('API响应成功:', response);
+            displayQuestionBank(response);
+            $('#loading').addClass('d-none');
+            $('#content').removeClass('d-none');
+        },
+        error: function(xhr, status, error) {
+            console.error('API请求失败:', xhr, status, error);
+            alert('加载题库失败，请重试');
+            $('#loading').addClass('d-none');
+        }
+    });
+}
+
+function buildPagination(meta, onPageClick) {
+    if (!meta || meta.total_pages <= 1) return '';
+    let html = '<nav><ul class="pagination justify-content-center">';
+    if (meta.has_prev) {
+        html += `<li class="page-item"><a class="page-link" href="#" onclick="${onPageClick}(${meta.current_page - 1});return false;">上一页</a></li>`;
+    } else {
+        html += `<li class="page-item disabled"><span class="page-link">上一页</span></li>`;
+    }
+    const startPage = Math.max(1, meta.current_page - 2);
+    const endPage = Math.min(meta.total_pages, meta.current_page + 2);
+    for (let i = startPage; i <= endPage; i++) {
+        if (i === meta.current_page) {
+            html += `<li class="page-item active"><span class="page-link">${i}</span></li>`;
+        } else {
+            html += `<li class="page-item"><a class="page-link" href="#" onclick="${onPageClick}(${i});return false;">${i}</a></li>`;
+        }
+    }
+    if (meta.has_next) {
+        html += `<li class="page-item"><a class="page-link" href="#" onclick="${onPageClick}(${meta.current_page + 1});return false;">下一页</a></li>`;
+    } else {
+        html += `<li class="page-item disabled"><span class="page-link">下一页</span></li>`;
+    }
+    html += '</ul></nav>';
+    const startIndex = (meta.current_page - 1) * 100 + 1;
+    const endIndex = Math.min(meta.current_page * 100, meta.total_count);
+    html += `<div class="text-center text-muted mt-2">显示第 ${startIndex}-${endIndex} 题，共 ${meta.total_count} 题</div>`;
+    return html;
+}
+
+// 缓存最新分页元数据，供卡片内渲染
+window.__latestPagination = null;
+
+function gotoSinglePage(p) { reloadWithPages(p, null, null); }
+function gotoMultiPage(p) { reloadWithPages(null, p, null); }
+function gotoTrueFalsePage(p) { reloadWithPages(null, null, p); }
+
+function reloadWithPages(pSingle, pMulti, pTF) {
+    currentPage = 1; // 不使用全局页
+    const typeFilter = $('#type-filter').val();
+    const statusFilter = $('#status-filter').val();
+    const sortBy = $('#sort-select').val();
+    $.ajax({
+        url: '/get_question_bank',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({ 
+            type_filter: typeFilter,
+            status_filter: statusFilter,
+            sort_by: sortBy,
+            page_single: pSingle || 1,
+            page_multi: pMulti || 1,
+            page_true_false: pTF || 1,
+            page_size: 100
+        }),
+        success: function(response) {
+            displayQuestionBank(response);
+            displayPaginationByType(response);
+            $('#loading').addClass('d-none');
+            $('#content').removeClass('d-none');
+        }
+    });
+}
+
+function displayQuestionBank(data) {
+    console.log('开始显示题库数据:', data);
+    const container = $('#question-bank-container');
+    container.empty();
+    
+    const typeFilter = $('#type-filter').val();
+    const questionTypes = [
+        { type: 1, name: '单选题', data: data.single_choice, color: 'primary' },
+        { type: 2, name: '多选题', data: data.multi_choice, color: 'success' },
+        { type: 3, name: '判断题', data: data.true_false, color: 'warning' }
+    ];
+    // 缓存分页数据
+    window.__latestPagination = {
+        single_pagination: data.single_pagination,
+        multi_pagination: data.multi_pagination,
+        true_false_pagination: data.true_false_pagination
+    };
+    
+    // 如果选择了特定题型，只显示该题型
+    const typesToShow = typeFilter === 'all' ? questionTypes : 
+        questionTypes.filter(t => t.type.toString() === typeFilter);
+    
+    typesToShow.forEach(typeInfo => {
+        if (typeInfo.data.length > 0) {
+            const cardHtml = `
+                <div class="card mb-4">
+                    <div class="card-header bg-${typeInfo.color} text-white">
+                        <h5 class="mb-0">
+                            <i class="fas fa-list"></i> ${typeInfo.name}
+                            <span class="badge bg-light text-${typeInfo.color}">${typeInfo.data.length}</span>
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="question-numbers" id="type-${typeInfo.type}-numbers">
+                            <!-- 题目编号图标 -->
+                        </div>
+                        <div class="mt-3" id="pagination-${typeInfo.type}"></div>
+                    </div>
+                </div>
+            `;
+            container.append(cardHtml);
+            
+            // 生成题目编号图标
+            displayQuestionNumbers(`type-${typeInfo.type}-numbers`, typeInfo.data, typeInfo.color);
+            // 生成对应分页
+            renderTypePagination(typeInfo.type);
+        }
+    });
+
+    // 追加错题记录与重点题库的功能卡片
+    const extraRow = $(`
+        <div class="row mt-3">
+            <div class="col-md-6">
+                <div class="card h-100 shadow">
+                    <div class="card-body text-center">
+                        <i class="fas fa-exclamation-triangle fa-2x text-danger mb-2"></i>
+                        <h5 class="card-title">错题记录</h5>
+                        <p class="card-text">进入专属页面，按题型浏览与复习错题</p>
+                        <a href="/wrong_questions" class="btn btn-custom"><i class="fas fa-list"></i> 打开错题记录</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card h-100 shadow">
+                    <div class="card-body text-center">
+                        <i class="fas fa-star fa-2x text-warning mb-2"></i>
+                        <h5 class="card-title">重点题库</h5>
+                        <p class="card-text">只看你标记为重点的题目，分题型浏览与复习</p>
+                        <a href="/important_bank" class="btn btn-custom"><i class="fas fa-book"></i> 打开重点题库</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `);
+    container.append(extraRow);
+}
+
+function renderTypePagination(type) {
+    // 使用后端返回的各题型分页元数据
+    const pagers = {
+        1: window.__latestPagination?.single_pagination,
+        2: window.__latestPagination?.multi_pagination,
+        3: window.__latestPagination?.true_false_pagination
+    };
+    const meta = pagers[type];
+    const mapFn = {1: 'gotoSinglePage', 2: 'gotoMultiPage', 3: 'gotoTrueFalsePage'}[type];
+    if (!meta) return;
+    const html = buildPagination(meta, mapFn);
+    $(`#pagination-${type}`).html(html);
+}
+
+function displayQuestionNumbers(containerId, questions, colorClass) {
+    const container = $(`#${containerId}`);
+    container.empty();
+    
+    if (questions.length === 0) {
+        container.html('<p class="text-muted">暂无题目</p>');
+        return;
+    }
+    
+    // 创建编号网格
+    let gridHtml = '<div class="row">';
+    
+    questions.forEach((question, index) => {
+        // 确定状态样式
+        let btnClass = 'btn-outline-secondary';
+        let statusIcon = '';
+        let tooltipText = `编号 ${question.number ?? (index+1)}`;
+        
+        if (question.is_answered) {
+            if (question.is_wrong) {
+                if (question.wrong_count >= 3) {
+                    // 常错题
+                    btnClass = 'btn-danger';
+                    statusIcon = '<i class="fas fa-exclamation-triangle"></i> ';
+                    tooltipText += ` - 常错题 (做错${question.wrong_count}次)`;
+                } else {
+                    // 一般错题
+                    btnClass = 'btn-warning';
+                    statusIcon = '<i class="fas fa-times-circle"></i> ';
+                    tooltipText += ` - 错题 (做错${question.wrong_count}次)`;
+                }
+            } else {
+                // 做对题
+                btnClass = 'btn-success';
+                statusIcon = '<i class="fas fa-check-circle"></i> ';
+                tooltipText += ' - 做对';
+            }
+        } else {
+            // 未做题
+            btnClass = 'btn-outline-secondary';
+            statusIcon = '<i class="fas fa-circle"></i> ';
+            tooltipText += ' - 未做';
+        }
+        
+        const displayNo = index + 1; // 使用序号而非题库id
+        const numberHtml = `
+            <div class="col-auto mb-2">
+                <button class="btn ${btnClass} btn-sm question-number-btn" 
+                        style="width: 50px; height: 50px; font-size: 12px;"
+                        onclick="loadQuestionDetail('${question.id}')"
+                        data-bs-toggle="tooltip" 
+                        data-bs-placement="top" 
+                        title="${tooltipText}">
+                    ${statusIcon}${question.number ?? displayNo}
+                </button>
+            </div>
+        `;
+        
+        if ((index + 1) % 10 === 0) {
+            gridHtml += numberHtml + '</div><div class="row">';
+        } else {
+            gridHtml += numberHtml;
+        }
+    });
+    
+    gridHtml += '</div>';
+    container.html(gridHtml);
+    
+    // 初始化工具提示
+    $('[data-bs-toggle="tooltip"]').tooltip();
+}
+
+function loadQuestionDetail(questionId) {
+    // 显示加载状态
+    $('#question-detail-content').html(`
+        <div class="text-center">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">加载中...</span>
+            </div>
+            <p class="mt-2">正在加载题目详情...</p>
+        </div>
+    `);
+    $('#questionDetailModal').modal('show');
+    
+    // 请求题目详情
+    $.ajax({
+        url: '/get_question_detail',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({ question_id: questionId }),
+        success: function(response) {
+            if (response.success) {
+                showQuestionDetail(response.question);
+            } else {
+                $('#question-detail-content').html(`
+                    <div class="alert alert-danger">
+                        <strong>错误：</strong> ${response.error || '加载题目详情失败'}
+                    </div>
+                `);
+            }
+        },
+        error: function() {
+            $('#question-detail-content').html(`
+                <div class="alert alert-danger">
+                    <strong>错误：</strong> 网络错误，请重试
+                </div>
+            `);
+        }
+    });
+}
+
+function showQuestionDetail(question) {
+    // 生成选项HTML
+    let optionsHtml = '';
+    if (question.options && question.options.length > 0) {
+        optionsHtml = '<div class="mb-3"><h6>选项</h6>';
+        question.options.forEach(option => {
+            const isCorrect = option.is_correct ? 'text-success fw-bold' : 'text-muted';
+            const icon = option.is_correct ? '<i class="fas fa-check-circle"></i> ' : '<i class="fas fa-circle"></i> ';
+            optionsHtml += `<p class="${isCorrect}">${icon}${option.tag}. ${option.content}</p>`;
+        });
+        optionsHtml += '</div>';
+    }
+    
+    // 生成状态信息
+    let statusInfo = '';
+    if (question.is_answered) {
+        if (question.is_wrong) {
+            if (question.wrong_count >= 3) {
+                statusInfo = `
+                    <div class="alert alert-danger">
+                        <strong>状态：</strong> 常错题 (做错 ${question.wrong_count} 次)<br>
+                        <strong>最后做题时间：</strong> ${question.last_answered_time}
+                    </div>
+                `;
+            } else {
+                statusInfo = `
+                    <div class="alert alert-warning">
+                        <strong>状态：</strong> 做错 ${question.wrong_count} 次<br>
+                        <strong>最后做题时间：</strong> ${question.last_answered_time}
+                    </div>
+                `;
+            }
+        } else {
+            statusInfo = `
+                <div class="alert alert-success">
+                    <strong>状态：</strong> 做对<br>
+                    <strong>最后做题时间：</strong> ${question.last_answered_time}
+                </div>
+            `;
+        }
+    } else {
+        statusInfo = `
+            <div class="alert alert-secondary">
+                <strong>状态：</strong> 未做
+            </div>
+        `;
+    }
+    
+    const detailHtml = `
+        <div class="mb-3">
+            <h6>题目内容</h6>
+            <p>${question.content}</p>
+        </div>
+        
+        ${optionsHtml}
+        
+        <div class="mb-3">
+            <h6>正确答案</h6>
+            <p class="text-success fw-bold">${question.correct_answer}</p>
+        </div>
+        
+        ${statusInfo}
+        
+        <div class="mb-3">
+            <button class="btn ${question.is_important ? 'btn-warning' : 'btn-outline-warning'}" onclick="toggleImportant(${question.id}, ${!question.is_important})">
+                <i class="fas fa-star"></i> ${question.is_important ? '取消重点' : '标记为重点'}
+            </button>
+        </div>
+        
+        <div class="mb-3">
+            <h6>解析</h6>
+            <p>${question.analysis || '暂无解析'}</p>
+        </div>
+        
+        <div class="text-muted">
+            <small>题目类型：${getTypeName(question.type)}</small><br>
+            <small>题目ID：${question.id}</small>
+        </div>
+    `;
+    
+    $('#question-detail-content').html(detailHtml);
+}
+
+function toggleImportant(questionId, mark) {
+    $.ajax({
+        url: '/toggle_important',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({ question_id: questionId, mark: mark }),
+        success: function(resp) {
+            if (resp.success) {
+                // 重新加载详情
+                loadQuestionDetail(questionId);
+            } else {
+                alert(resp.message || '操作失败');
+            }
+        },
+        error: function() {
+            alert('网络错误，请重试');
+        }
+    });
+}
+
+function getTypeName(type) {
+    const types = {
+        1: '单选题',
+        2: '多选题',
+        3: '判断题'
+    };
+    return types[type] || '未知类型';
+}
+</script>
+{% endblock %}

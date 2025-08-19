@@ -1,0 +1,350 @@
+{% extends "base.html" %}
+
+{% block title %}随机做题 - 金融业数字化转型技能大赛题库系统{% endblock %}
+
+{% block content %}
+<div id="mode-selection" class="text-center">
+    <h2 class="mb-4">
+        <i class="fas fa-random text-primary"></i>
+        选择做题模式
+    </h2>
+    
+    <div class="row justify-content-center mb-3">
+        <div class="col-md-6">
+            <div class="input-group">
+                <label class="input-group-text"><i class="fas fa-filter"></i> 题型</label>
+                <select id="type-filter" class="form-select">
+                    <option value="0" selected>所有题型</option>
+                    <option value="1">单选题</option>
+                    <option value="2">多选题</option>
+                    <option value="3">判断题</option>
+                </select>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row justify-content-center">
+        <div class="col-md-4">
+            <div class="card shadow">
+                <div class="card-body text-center">
+                    <i class="fas fa-list fa-2x text-primary mb-3"></i>
+                    <h5 class="card-title">全量题库</h5>
+                    <p class="card-text">从所有题目中随机出题</p>
+                    <button class="btn btn-custom" onclick="startPractice('all')">
+                        <i class="fas fa-play"></i> 开始做题
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4">
+            <div class="card shadow">
+                <div class="card-body text-center">
+                    <i class="fas fa-question-circle fa-2x text-success mb-3"></i>
+                    <h5 class="card-title">未做题库</h5>
+                    <p class="card-text">从未做过的题目中随机出题</p>
+                    <button class="btn btn-custom" onclick="startPractice('unanswered')">
+                        <i class="fas fa-play"></i> 开始做题
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4">
+            <div class="card shadow">
+                <div class="card-body text-center">
+                    <i class="fas fa-exclamation-triangle fa-2x text-warning mb-3"></i>
+                    <h5 class="card-title">错题库</h5>
+                    <p class="card-text">从做错的题目中随机出题</p>
+                    <button class="btn btn-custom" onclick="startPractice('wrong')">
+                        <i class="fas fa-play"></i> 开始做题
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-4 mt-3">
+            <div class="card shadow">
+                <div class="card-body text-center">
+                    <i class="fas fa-star fa-2x text-warning mb-3"></i>
+                    <h5 class="card-title">重点题库</h5>
+                    <p class="card-text">从已标记为重点的题目中随机出题</p>
+                    <button class="btn btn-custom" onclick="startPractice('important')">
+                        <i class="fas fa-play"></i> 开始做题
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="question-container" class="d-none">
+    <div class="text-center mb-4">
+        <h3 id="question-title">正在加载题目...</h3>
+        <div class="progress-bar">
+            <div class="progress-fill" style="width: 0%"></div>
+        </div>
+    </div>
+    
+    <div class="question-card">
+        <div id="question-content" class="mb-4"></div>
+        
+        <div id="options-container"></div>
+        
+        <div class="text-center mt-4">
+            <button id="submit-btn" class="btn btn-custom" onclick="submitAnswer()" disabled>
+                <i class="fas fa-check"></i> 提交答案
+            </button>
+            <button id="next-btn" class="btn btn-custom d-none" onclick="nextQuestion()">
+                <i class="fas fa-arrow-right"></i> 下一题
+            </button>
+        </div>
+    </div>
+    
+    <div id="result-container" class="question-card d-none">
+        <h4 id="result-title"></h4>
+        <div id="result-content"></div>
+    </div>
+</div>
+
+<div class="text-center mt-4">
+    <a href="/" class="btn btn-secondary">
+        <i class="fas fa-home"></i> 返回主页
+    </a>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentQuestion = null;
+let currentMode = null;
+let selectedAnswer = null;
+let selectedAnswers = []; // 用于多选题
+let currentTypeFilter = 0; // 0=所有
+
+function startPractice(mode) {
+    currentMode = mode;
+    currentTypeFilter = parseInt($('#type-filter').val() || '0', 10);
+    $('#mode-selection').addClass('d-none');
+    $('#question-container').removeClass('d-none');
+    loadQuestion();
+}
+
+function loadQuestion() {
+    $('#question-title').text('正在加载题目...');
+    $('#submit-btn').prop('disabled', true);
+    $('#next-btn').addClass('d-none');
+    $('#result-container').addClass('d-none');
+    
+    $.ajax({
+        url: '/get_random_question',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({ mode: currentMode, type_filter: currentTypeFilter }),
+        success: function(response) {
+            if (response.error) {
+                alert(response.error);
+                $('#mode-selection').removeClass('d-none');
+                $('#question-container').addClass('d-none');
+                return;
+            }
+            
+            currentQuestion = response;
+            displayQuestion(response);
+        },
+        error: function() {
+            alert('加载题目失败，请重试');
+        }
+    });
+}
+
+function displayQuestion(question) {
+    $('#question-title').html(`题目 (${getTypeName(question.type)}) ${question.number ? `<span class="badge bg-info ms-2">编号：${question.number}</span>` : ''} ${question.is_important ? '<span class="badge bg-warning text-dark ms-2"><i class="fas fa-star"></i> 重点</span>' : ''}`);
+    $('#question-content').html(`<h5>${question.content}</h5>`);
+    
+    const optionsContainer = $('#options-container');
+    optionsContainer.empty();
+    
+    if (question.type === 2) {
+        // 多选题：使用复选框
+        question.options.forEach(option => {
+            const optionDiv = $(`
+                <div class="option-checkbox">
+                    <input type="checkbox" id="option_${option.tag}" value="${option.tag}" onchange="toggleMultiOption('${option.tag}')">
+                    <label for="option_${option.tag}">
+                        <strong>${option.tag}.</strong> ${option.content}
+                    </label>
+                </div>
+            `);
+            optionsContainer.append(optionDiv);
+        });
+        selectedAnswers = [];
+        selectedAnswer = null;
+    } else {
+        // 单选题和判断题：使用单选按钮
+        question.options.forEach(option => {
+            const optionBtn = $(`
+                <button class="option-btn" onclick="selectOption('${option.tag}')">
+                    <strong>${option.tag}.</strong> ${option.content}
+                </button>
+            `);
+            optionsContainer.append(optionBtn);
+        });
+        selectedAnswer = null;
+        selectedAnswers = [];
+    }
+    
+    renderImportantButton(question);
+    $('#submit-btn').prop('disabled', true);
+}
+
+function renderImportantButton(question) {
+    if (!$('#important-btn').length) {
+        $('#question-title').after('<div class="mt-2"><button id="important-btn" class="btn btn-sm btn-outline-warning"></button></div>');
+    }
+    const btn = $('#important-btn');
+    if (question.is_important) {
+        btn.removeClass('btn-outline-warning').addClass('btn-warning').html('<i class="fas fa-star"></i> 取消重点');
+        btn.off('click').on('click', () => toggleImportantInPractice(question.id, false));
+    } else {
+        btn.removeClass('btn-warning').addClass('btn-outline-warning').html('<i class="fas fa-star"></i> 标记为重点');
+        btn.off('click').on('click', () => toggleImportantInPractice(question.id, true));
+    }
+}
+
+function toggleImportantInPractice(questionId, mark) {
+    $.ajax({
+        url: '/toggle_important',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({ question_id: questionId, mark: mark }),
+        success: function(resp) {
+            if (resp.success) {
+                const btn = $('#important-btn');
+                if (mark) {
+                    btn.removeClass('btn-outline-warning').addClass('btn-warning').html('<i class="fas fa-star"></i> 取消重点');
+                    btn.off('click').on('click', () => toggleImportantInPractice(questionId, false));
+                } else {
+                    btn.removeClass('btn-warning').addClass('btn-outline-warning').html('<i class="fas fa-star"></i> 标记为重点');
+                    btn.off('click').on('click', () => toggleImportantInPractice(questionId, true));
+                }
+            } else {
+                alert(resp.message || '操作失败');
+            }
+        },
+        error: function(){ alert('网络错误，请重试'); }
+    });
+}
+
+function selectOption(option) {
+    $('.option-btn').removeClass('selected');
+    $(`.option-btn:contains('${option}.')`).addClass('selected');
+    selectedAnswer = option;
+    $('#submit-btn').prop('disabled', false);
+}
+
+function toggleMultiOption(option) {
+    const checkbox = $(`#option_${option}`);
+    if (checkbox.is(':checked')) {
+        selectedAnswers.push(option);
+    } else {
+        selectedAnswers = selectedAnswers.filter(a => a !== option);
+    }
+    $('#submit-btn').prop('disabled', selectedAnswers.length === 0);
+}
+
+function submitAnswer() {
+    let answer;
+    if (currentQuestion.type === 2) {
+        // 多选题
+        if (selectedAnswers.length === 0) {
+            alert('请至少选择一个答案');
+            return;
+        }
+        answer = selectedAnswers;
+    } else {
+        // 单选题和判断题
+        if (!selectedAnswer) {
+            alert('请选择一个答案');
+            return;
+        }
+        answer = selectedAnswer;
+    }
+    
+    $('#submit-btn').prop('disabled', true);
+    
+    $.ajax({
+        url: '/submit_answer',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({
+            question_id: currentQuestion.id,
+            answer: answer
+        }),
+        success: function(response) {
+            showResult(response);
+        },
+        error: function() {
+            alert('提交答案失败，请重试');
+        }
+    });
+}
+
+function showResult(result) {
+    if (currentQuestion.type === 2) {
+        // 多选题结果显示
+        $('.option-checkbox input').each(function() {
+            const optionTag = $(this).val();
+            const correctAnswers = result.correct_answer.split(',');
+            
+            if (correctAnswers.includes(optionTag)) {
+                $(this).parent().addClass('correct');
+            } else if (selectedAnswers.includes(optionTag) && !result.is_correct) {
+                $(this).parent().addClass('incorrect');
+            }
+        });
+    } else {
+        // 单选题和判断题结果显示
+        $('.option-btn').each(function() {
+            const optionText = $(this).text();
+            const optionTag = optionText.split('.')[0].trim();
+            
+            if (optionTag === result.correct_answer) {
+                $(this).addClass('correct');
+            } else if (optionTag === selectedAnswer && !result.is_correct) {
+                $(this).addClass('incorrect');
+            }
+        });
+    }
+    
+    // 显示结果
+    const resultTitle = result.is_correct ? 
+        '<i class="fas fa-check-circle text-success"></i> 回答正确！' : 
+        '<i class="fas fa-times-circle text-danger"></i> 回答错误';
+    
+    $('#result-title').html(resultTitle);
+    $('#result-content').html(`
+        <div class="alert alert-info">
+            <strong>正确答案：</strong> ${result.correct_answer}<br>
+            <strong>解析：</strong> ${result.analysis || '暂无解析'}
+        </div>
+    `);
+    
+    $('#result-container').removeClass('d-none');
+    $('#next-btn').removeClass('d-none');
+}
+
+function nextQuestion() {
+    loadQuestion();
+}
+
+function getTypeName(type) {
+    const types = {
+        1: '单选题',
+        2: '多选题',
+        3: '判断题'
+    };
+    return types[type] || '未知类型';
+}
+</script>
+{% endblock %} 

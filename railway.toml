@@ -1,0 +1,21 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "python run.py"
+healthcheckPath = "/"
+healthcheckTimeout = 300
+restartPolicyType = "on_failure"
+
+[[services]]
+name = "question-bank-system"
+port = 8080
+
+# 启用持久化存储
+[services.volumes]
+data = "/data"
+
+# 环境变量配置
+[services.variables]
+RAILWAY_ENVIRONMENT = "true"
+USER_DATA_FILE = "/data/user_data.json" 

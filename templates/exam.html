@@ -1,0 +1,406 @@
+{% extends "base.html" %}
+
+{% block title %}模拟考试 - 金融业数字化转型技能大赛题库系统{% endblock %}
+
+{% block content %}
+<div id="exam-intro" class="text-center">
+    <h2 class="mb-4">
+        <i class="fas fa-file-alt text-success"></i>
+        模拟考试
+    </h2>
+    
+    <div class="card shadow">
+        <div class="card-body">
+            <h4 class="card-title">考试说明</h4>
+            <div class="row">
+                <div class="col-md-6">
+                    <h5>考试内容</h5>
+                    <ul class="list-group list-group-flush">
+                        <li class="list-group-item">单选题：50题 × 5分 = 250分</li>
+                        <li class="list-group-item">多选题：50题 × 10分 = 500分</li>
+                        <li class="list-group-item">判断题：50题 × 5分 = 250分</li>
+                        <li class="list-group-item"><strong>总计：150题，1000分</strong></li>
+                    </ul>
+                </div>
+                <div class="col-md-6">
+                    <h5>考试规则</h5>
+                    <ul class="list-group list-group-flush">
+                        <li class="list-group-item">考试时间：60分钟</li>
+                        <li class="list-group-item">时间到自动交卷</li>
+                        <li class="list-group-item">可以提前交卷</li>
+                        <li class="list-group-item">未答题目计0分</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="mt-4">
+                <button class="btn btn-custom btn-lg" onclick="startExam()">
+                    <i class="fas fa-play"></i> 开始考试
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="exam-container" class="d-none">
+    <div class="row">
+        <div class="col-md-9">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h3>考试进行中</h3>
+                <div class="timer" id="timer">60:00</div>
+            </div>
+            
+            <div class="progress-bar mb-3">
+                <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+            </div>
+            
+            <div class="question-card">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 id="question-number">第1题</h5>
+                    <span id="question-type" class="badge bg-primary">单选题</span>
+                </div>
+                
+                <div id="question-content" class="mb-4"></div>
+                
+                <div id="options-container"></div>
+                
+                <div class="d-flex justify-content-between mt-4">
+                    <button id="prev-btn" class="btn btn-secondary" onclick="prevQuestion()" disabled>
+                        <i class="fas fa-arrow-left"></i> 上一题
+                    </button>
+                    <button id="next-btn" class="btn btn-primary" onclick="nextQuestion()">
+                        下一题 <i class="fas fa-arrow-right"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">答题卡</h5>
+                </div>
+                <div class="card-body">
+                    <div id="answer-sheet"></div>
+                    <div class="mt-3">
+                        <button class="btn btn-success w-100" onclick="submitExam()">
+                            <i class="fas fa-check"></i> 交卷
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="exam-result" class="d-none">
+    <div class="text-center">
+        <h2 class="mb-4">考试结果</h2>
+        
+        <div class="card shadow">
+            <div class="card-body">
+                <h3 id="score-display" class="text-primary"></h3>
+                <p class="lead">考试完成！</p>
+                
+                <div id="wrong-answers-container" class="mt-4">
+                    <h4>错题回顾</h4>
+                    <div id="wrong-answers-list"></div>
+                </div>
+                
+                <div class="mt-4">
+                    <a href="/exam" class="btn btn-custom">
+                        <i class="fas fa-redo"></i> 重新考试
+                    </a>
+                    <a href="/" class="btn btn-secondary">
+                        <i class="fas fa-home"></i> 返回主页
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="text-center mt-4">
+    <a href="/" class="btn btn-secondary">
+        <i class="fas fa-home"></i> 返回主页
+    </a>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let examQuestions = [];
+let currentQuestionIndex = 0;
+let userAnswers = {};
+let examId = null;
+let timeLeft = 3600; // 60分钟（默认）
+let timer = null;
+
+function startExam() {
+    $('#exam-intro').addClass('d-none');
+    $('#exam-container').removeClass('d-none');
+    
+    $.ajax({
+        url: '/start_exam',
+        method: 'POST',
+        contentType: 'application/json',
+        success: function(response) {
+            examQuestions = response.questions;
+            examId = response.exam_id;
+            if (response.answers) {
+                userAnswers = response.answers;
+            }
+            if (response.time_left !== undefined) {
+                timeLeft = response.time_left;
+            }
+            displayQuestion(0);
+            updateAnswerSheet();
+            startTimer();
+        },
+        error: function() {
+            alert('开始考试失败，请重试');
+        }
+    });
+}
+
+function displayQuestion(index) {
+    if (index < 0 || index >= examQuestions.length) return;
+    
+    currentQuestionIndex = index;
+    const question = examQuestions[index];
+    
+    $('#question-number').text(`第${index + 1}题`);
+    $('#question-type').text(getTypeName(question.type));
+    $('#question-content').html(`<h5>${question.content}</h5>`);
+    
+    const optionsContainer = $('#options-container');
+    optionsContainer.empty();
+    
+    if (question.type === 2) {
+        // 多选题：使用复选框
+        const currentAnswers = userAnswers[question.id] || [];
+        if (!Array.isArray(currentAnswers)) {
+            currentAnswers = [currentAnswers].filter(a => a);
+        }
+        
+        question.options.forEach(option => {
+            const isChecked = currentAnswers.includes(option.tag) ? 'checked' : '';
+            const optionHtml = `
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" name="question_${question.id}" 
+                           value="${option.tag}" ${isChecked} onchange="toggleMultiAnswer(${question.id}, '${option.tag}')">
+                    <label class="form-check-label">
+                        <strong>${option.tag}.</strong> ${option.content}
+                    </label>
+                </div>
+            `;
+            optionsContainer.append(optionHtml);
+        });
+    } else {
+        // 单选题和判断题：使用单选按钮
+        question.options.forEach(option => {
+            const isChecked = userAnswers[question.id] === option.tag ? 'checked' : '';
+            const optionHtml = `
+                <div class="form-check">
+                    <input class="form-check-input" type="radio" name="question_${question.id}" 
+                           value="${option.tag}" ${isChecked} onchange="selectAnswer(${question.id}, '${option.tag}')">
+                    <label class="form-check-label">
+                        <strong>${option.tag}.</strong> ${option.content}
+                    </label>
+                </div>
+            `;
+            optionsContainer.append(optionHtml);
+        });
+    }
+    
+    $('#prev-btn').prop('disabled', index === 0);
+    $('#next-btn').text(index === examQuestions.length - 1 ? '完成' : '下一题');
+    
+    updateProgress();
+}
+
+function selectAnswer(questionId, answer) {
+    userAnswers[questionId] = answer;
+    updateAnswerSheet();
+}
+
+function toggleMultiAnswer(questionId, answer) {
+    if (!userAnswers[questionId]) {
+        userAnswers[questionId] = [];
+    }
+    
+    if (!Array.isArray(userAnswers[questionId])) {
+        userAnswers[questionId] = [userAnswers[questionId]].filter(a => a);
+    }
+    
+    const answers = userAnswers[questionId];
+    const index = answers.indexOf(answer);
+    
+    if (index > -1) {
+        answers.splice(index, 1);
+    } else {
+        answers.push(answer);
+    }
+    
+    updateAnswerSheet();
+}
+
+function prevQuestion() {
+    if (currentQuestionIndex > 0) {
+        displayQuestion(currentQuestionIndex - 1);
+    }
+}
+
+function nextQuestion() {
+    if (currentQuestionIndex < examQuestions.length - 1) {
+        displayQuestion(currentQuestionIndex + 1);
+    } else {
+        submitExam();
+    }
+}
+
+function updateAnswerSheet() {
+    const answerSheet = $('#answer-sheet');
+    answerSheet.empty();
+    
+    examQuestions.forEach((question, index) => {
+        const isAnswered = userAnswers[question.id];
+        let btnClass = 'btn-outline-secondary';
+        let btnText = index + 1;
+        
+        if (isAnswered) {
+            if (question.type === 2) {
+                // 多选题：检查是否有选择答案
+                const answers = Array.isArray(isAnswered) ? isAnswered : [isAnswered];
+                if (answers.length > 0) {
+                    btnClass = 'btn-success';
+                    btnText = `${index + 1}✓`;
+                }
+            } else {
+                // 单选题和判断题
+                btnClass = 'btn-success';
+                btnText = `${index + 1}✓`;
+            }
+        }
+        
+        const btn = $(`
+            <button class="btn ${btnClass} btn-sm m-1" onclick="displayQuestion(${index})" style="width: 40px; height: 40px;">
+                ${btnText}
+            </button>
+        `);
+        answerSheet.append(btn);
+    });
+}
+
+function updateProgress() {
+    let answeredCount = 0;
+    
+    examQuestions.forEach(question => {
+        const answer = userAnswers[question.id];
+        if (answer) {
+            if (question.type === 2) {
+                // 多选题：检查是否有选择答案
+                const answers = Array.isArray(answer) ? answer : [answer];
+                if (answers.length > 0) {
+                    answeredCount++;
+                }
+            } else {
+                // 单选题和判断题
+                answeredCount++;
+            }
+        }
+    });
+    
+    const progress = (answeredCount / examQuestions.length) * 100;
+    $('#progress-fill').css('width', progress + '%');
+}
+
+function startTimer() {
+    timer = setInterval(function() {
+        timeLeft--;
+        const minutes = Math.floor(timeLeft / 60);
+        const seconds = timeLeft % 60;
+        $('#timer').text(`${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`);
+        
+        if (timeLeft <= 0) {
+            clearInterval(timer);
+            submitExam();
+        }
+    }, 1000);
+}
+
+function submitExam() {
+    clearInterval(timer);
+    
+    $.ajax({
+        url: '/submit_exam',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({
+            exam_id: examId,
+            answers: userAnswers
+        }),
+        success: function(response) {
+            showExamResult(response);
+        },
+        error: function() {
+            alert('提交考试失败，请重试');
+        }
+    });
+}
+
+// 进入页面带 resume=1 时自动开始（可恢复）
+$(function() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('resume') === '1') {
+        startExam();
+    }
+});
+
+// 离开页面前保存进度（节流即可，此处简单实现）
+window.addEventListener('beforeunload', function() {
+    if (!examId) return;
+    navigator.sendBeacon('/save_exam_progress', new Blob([JSON.stringify({ exam_id: examId, answers: userAnswers })], { type: 'application/json' }));
+});
+
+function showExamResult(result) {
+    $('#exam-container').addClass('d-none');
+    $('#exam-result').removeClass('d-none');
+    
+    $('#score-display').text(`得分：${result.total_score} / 1000`);
+    
+    if (result.wrong_answers.length > 0) {
+        const wrongList = $('#wrong-answers-list');
+        wrongList.empty();
+        
+        result.wrong_answers.forEach((wrong, index) => {
+            const wrongHtml = `
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <h6>第${index + 1}题 (${getTypeName(wrong.type)})</h6>
+                        <p>${wrong.question_content}</p>
+                        <div class="alert alert-danger">
+                            <strong>您的答案：</strong> ${wrong.user_answer || '未作答'}<br>
+                            <strong>正确答案：</strong> ${wrong.correct_answer}<br>
+                            <strong>解析：</strong> ${wrong.analysis || '暂无解析'}
+                        </div>
+                    </div>
+                </div>
+            `;
+            wrongList.append(wrongHtml);
+        });
+    } else {
+        $('#wrong-answers-container').html('<div class="alert alert-success">恭喜！没有错题！</div>');
+    }
+}
+
+function getTypeName(type) {
+    const types = {
+        1: '单选题',
+        2: '多选题',
+        3: '判断题'
+    };
+    return types[type] || '未知类型';
+}
+</script>
+{% endblock %} 

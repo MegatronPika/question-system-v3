@@ -1,0 +1,429 @@
+{% extends "base.html" %}
+
+{% block title %}个人资料 - 金融业数字化转型技能大赛题库系统{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card shadow">
+            <div class="card-header">
+                <h3 class="mb-0">
+                    <i class="fas fa-user-circle text-primary"></i>
+                    个人资料
+                </h3>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h5>基本信息</h5>
+                        <table class="table">
+                            <tr>
+                                <td><strong>用户名：</strong></td>
+                                <td>{{ user_id }}</td>
+                            </tr>
+                            <tr>
+                                <td><strong>注册时间：</strong></td>
+                                <td>{{ profile.created_time[:19] if profile.created_time else '未知' }}</td>
+                            </tr>
+                            <tr>
+                                <td><strong>最后登录：</strong></td>
+                                <td>{{ profile.last_login[:19] if profile.last_login else '从未登录' }}</td>
+                            </tr>
+                            <tr>
+                                <td><strong>最后登录IP：</strong></td>
+                                <td>{{ profile.last_ip or '未知' }}</td>
+                            </tr>
+                        </table>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <h5>学习统计</h5>
+                        <div id="stats-container">
+                            <div class="text-center">
+                                <i class="fas fa-spinner fa-spin"></i>
+                                加载中...
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mt-4">
+                    <h5>最近考试记录</h5>
+                    <div id="exam-records">
+                        <div class="text-center">
+                            <i class="fas fa-spinner fa-spin"></i>
+                            加载中...
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mt-4 text-center">
+                    <a href="/" class="btn btn-custom">
+                        <i class="fas fa-home"></i> 返回主页
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 考试详情模态框 -->
+<div class="modal fade" id="examDetailModal" tabindex="-1" aria-labelledby="examDetailModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="examDetailModalLabel">
+                    <i class="fas fa-file-alt text-primary"></i>
+                    考试详情
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- 考试详情内容将在这里动态加载 -->
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+$(document).ready(function() {
+    loadUserStats();
+    loadExamRecords();
+});
+
+function loadUserStats() {
+    $.ajax({
+        url: '/get_user_stats',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({}),
+        success: function(response) {
+            if (response.success) {
+                const stats = response.stats;
+                $('#stats-container').html(`
+                    <div class="row text-center">
+                        <div class="col-4">
+                            <div class="card bg-primary text-white">
+                                <div class="card-body">
+                                    <h4>${stats.answered_count}</h4>
+                                    <small>已做题目</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <div class="card bg-secondary text-white">
+                                <div class="card-body">
+                                    <h4>${stats.unanswered_count}</h4>
+                                    <small>未做题目</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <div class="card bg-warning text-white">
+                                <div class="card-body">
+                                    <h4>${stats.wrong_count}</h4>
+                                    <small>错题数量</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row text-center mt-3">
+                        <div class="col-6">
+                            <div class="card bg-success text-white">
+                                <div class="card-body">
+                                    <h4>${stats.exam_count}</h4>
+                                    <small>考试次数</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="card bg-info text-white">
+                                <div class="card-body">
+                                    <h4>${stats.avg_score || 0}</h4>
+                                    <small>平均分数</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row mt-3">
+                        <div class="col-12">
+                            <div class="progress">
+                                <div class="progress-bar bg-primary" role="progressbar" 
+                                     style="width: ${(stats.answered_count / stats.total_questions * 100).toFixed(1)}%">
+                                    ${(stats.answered_count / stats.total_questions * 100).toFixed(1)}%
+                                </div>
+                            </div>
+                            <small class="text-muted">完成进度：${stats.answered_count}/${stats.total_questions}</small>
+                        </div>
+                    </div>
+                `);
+            } else {
+                $('#stats-container').html('<div class="alert alert-warning">无法加载统计数据</div>');
+            }
+        },
+        error: function() {
+            $('#stats-container').html('<div class="alert alert-danger">加载统计数据失败</div>');
+        }
+    });
+}
+
+let examPage = 1;
+let examPageSize = 10;
+
+function loadExamRecords(page = examPage) {
+    examPage = page;
+    $.ajax({
+        url: '/get_exam_records',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({ page: examPage, page_size: examPageSize }),
+        success: function(response) {
+            if (response.success && response.records.length > 0) {
+                let html = '<div class="table-responsive"><table class="table table-striped">';
+                html += '<thead><tr><th>考试时间</th><th>分数</th><th>状态</th><th>操作</th></tr></thead><tbody>';
+                
+                response.records.forEach(record => {
+                    const examTime = new Date(record.start_time).toLocaleString();
+                    const status = record.status === 'completed' ? 
+                        '<span class="badge bg-success">已完成</span>' : 
+                        '<span class="badge bg-warning">进行中</span>';
+                    
+                    html += `
+                        <tr>
+                            <td>${examTime}</td>
+                            <td>${record.total_score || 0}</td>
+                            <td>${status}</td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-primary" onclick="viewExamDetail('${record.exam_id}')">
+                                    <i class="fas fa-eye"></i> 查看详情
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                });
+                
+                html += '</tbody></table></div>';
+
+                // 分页控件
+                const p = response.pagination || {};
+                const prevDisabled = p.has_prev ? '' : 'disabled';
+                const nextDisabled = p.has_next ? '' : 'disabled';
+                html += `
+                    <div class="d-flex justify-content-between align-items-center mt-2">
+                        <button class="btn btn-sm btn-outline-secondary" ${prevDisabled} onclick="loadExamRecords(${(p.current_page || 1) - 1})">上一页</button>
+                        <span class="text-muted">第 ${p.current_page || 1} / ${p.total_pages || 1} 页，共 ${p.total_count || 0} 场</span>
+                        <button class="btn btn-sm btn-outline-secondary" ${nextDisabled} onclick="loadExamRecords(${(p.current_page || 1) + 1})">下一页</button>
+                    </div>
+                `;
+                $('#exam-records').html(html);
+            } else {
+                $('#exam-records').html('<div class="alert alert-info">暂无考试记录</div>');
+            }
+        },
+        error: function() {
+            $('#exam-records').html('<div class="alert alert-danger">加载考试记录失败</div>');
+        }
+    });
+}
+
+function viewExamDetail(examId) {
+    // 显示加载状态
+    $('#examDetailModal .modal-body').html('<div class="text-center"><i class="fas fa-spinner fa-spin"></i> 加载中...</div>');
+    $('#examDetailModal').modal('show');
+    
+    // 获取考试详情
+    $.ajax({
+        url: '/get_exam_detail',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({exam_id: examId}),
+        success: function(response) {
+            if (response.success) {
+                displayExamDetail(response.exam_detail);
+            } else {
+                $('#examDetailModal .modal-body').html('<div class="alert alert-danger">' + response.message + '</div>');
+            }
+        },
+        error: function() {
+            $('#examDetailModal .modal-body').html('<div class="alert alert-danger">加载考试详情失败</div>');
+        }
+    });
+}
+
+function displayExamDetail(examDetail) {
+    const startTime = new Date(examDetail.start_time).toLocaleString();
+    const endTime = examDetail.end_time ? new Date(examDetail.end_time).toLocaleString() : '未完成';
+    const status = examDetail.status === 'completed' ? 
+        '<span class="badge bg-success">已完成</span>' : 
+        '<span class="badge bg-warning">进行中</span>';
+    
+    let html = `
+        <div class="row mb-3">
+            <div class="col-md-6">
+                <strong>考试ID：</strong> ${examDetail.exam_id}
+            </div>
+            <div class="col-md-6">
+                <strong>状态：</strong> ${status}
+            </div>
+        </div>
+        <div class="row mb-3">
+            <div class="col-md-6">
+                <strong>开始时间：</strong> ${startTime}
+            </div>
+            <div class="col-md-6">
+                <strong>结束时间：</strong> ${endTime}
+            </div>
+        </div>
+        <div class="row mb-3">
+            <div class="col-md-6">
+                <strong>总分：</strong> <span class="text-primary fw-bold">${examDetail.total_score}</span>
+            </div>
+            <div class="col-md-6">
+                <strong>题目数量：</strong> ${examDetail.questions.length}
+            </div>
+        </div>
+    `;
+
+    // 进行中的考试：提供“继续考试并交卷”按钮
+    if (examDetail.status === 'ongoing') {
+        html += `
+            <div class="alert alert-info d-flex justify-content-between align-items-center">
+                <div>
+                    该考试尚未完成，可点击“继续考试”进入考试页面，继续作答并交卷。
+                </div>
+                <div>
+                    <a href="/exam?resume=1" class="btn btn-primary btn-sm">
+                        <i class="fas fa-play"></i> 继续考试
+                    </a>
+                </div>
+            </div>
+        `;
+    }
+    
+    // 如果有错题，显示错题统计
+    if (examDetail.wrong_answers && examDetail.wrong_answers.length > 0) {
+        html += `
+            <div class="alert alert-warning">
+                <strong>错题统计：</strong> 共 ${examDetail.wrong_answers.length} 道错题
+            </div>
+        `;
+    }
+    
+    // 显示题目列表
+    html += '<h6 class="mt-4">题目详情</h6>';
+    html += '<div class="accordion" id="examQuestions">';
+    
+    examDetail.questions.forEach((question, index) => {
+        const isWrong = examDetail.wrong_answers && 
+            examDetail.wrong_answers.some(wrong => wrong.question_id === question.id);
+        
+        const questionType = question.type === 1 ? '单选题' : 
+                           question.type === 2 ? '多选题' : '判断题';
+        
+        const questionClass = isWrong ? 'border-danger' : 'border-success';
+        const questionHeader = isWrong ? 'text-danger' : 'text-success';
+        
+        html += `
+            <div class="accordion-item ${questionClass}">
+                <h2 class="accordion-header" id="heading${index}">
+                    <button class="accordion-button collapsed ${questionHeader}" type="button" 
+                            data-bs-toggle="collapse" data-bs-target="#collapse${index}">
+                        <strong>第${index + 1}题 (${questionType})</strong>
+                        <span class="badge bg-info ms-2">编号：${question.number ?? ''}</span>
+                        ${isWrong ? '<span class="badge bg-danger ms-2">错误</span>' : '<span class="badge bg-success ms-2">正确</span>'}
+                        <span class="ms-2">得分：${isWrong ? 0 : question.score}</span>
+                    </button>
+                </h2>
+                <div id="collapse${index}" class="accordion-collapse collapse" data-bs-parent="#examQuestions">
+                    <div class="accordion-body">
+                        <p><strong>题目：</strong>${question.content}</p>
+        `;
+        
+        // 显示选项（如果有）
+        if (question.options && question.options.length > 0) {
+            html += '<p><strong>选项：</strong></p><ul>';
+            question.options.forEach(option => {
+                const isCorrect = option.is_correct;
+                const optionClass = isCorrect ? 'text-success fw-bold' : '';
+                html += `<li class="${optionClass}">${option.tag}. ${option.content}</li>`;
+            });
+            html += '</ul>';
+        }
+        
+        html += `
+                        <p><strong>正确答案：</strong><span class="text-success fw-bold">${question.correct_answer}</span></p>
+        `;
+        
+        // 如果是错题，显示用户答案
+        if (isWrong) {
+            const wrongAnswer = examDetail.wrong_answers.find(wrong => wrong.question_id === question.id);
+            if (wrongAnswer) {
+                html += `<p><strong>你的答案：</strong><span class="text-danger fw-bold">${wrongAnswer.user_answer}</span></p>`;
+            }
+        }
+        
+        // 显示解析
+        if (question.analysis) {
+            html += `<p><strong>解析：</strong>${question.analysis}</p>`;
+        }
+        
+        // 重点标记按钮（统一为单按钮切换，展示当前状态）
+        const isImportant = (question.is_important === true);
+        const btnId = `imp-btn-${question.id}`;
+        html += `
+            <div class="mt-2">
+                <button id="${btnId}" class="btn ${isImportant ? 'btn-warning' : 'btn-outline-warning'} btn-sm"
+                    onclick="toggleImportantFromExam('${question.id}', ${!isImportant})">
+                    <i class="fas fa-star"></i> ${isImportant ? '取消重点' : '标记为重点'}
+                </button>
+            </div>
+        `;
+
+        html += `
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+    
+    html += '</div>';
+    
+    $('#examDetailModal .modal-body').html(html);
+}
+
+function toggleImportantFromExam(questionId, mark) {
+    $.ajax({
+        url: '/toggle_important',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({ question_id: questionId, mark: mark }),
+        success: function(resp) {
+            if (resp.success) {
+                // 就地更新按钮样式与文案
+                const btn = document.getElementById(`imp-btn-${questionId}`);
+                if (btn) {
+                    btn.classList.remove('btn-warning','btn-outline-warning');
+                    if (mark) {
+                        btn.classList.add('btn-warning');
+                        btn.innerHTML = '<i class="fas fa-star"></i> 取消重点';
+                        btn.setAttribute('onclick', `toggleImportantFromExam('${questionId}', false)`);
+                    } else {
+                        btn.classList.add('btn-outline-warning');
+                        btn.innerHTML = '<i class="fas fa-star"></i> 标记为重点';
+                        btn.setAttribute('onclick', `toggleImportantFromExam('${questionId}', true)`);
+                    }
+                }
+            } else {
+                alert(resp.message || '操作失败');
+            }
+        },
+        error: function(){ alert('网络错误，请重试'); }
+    });
+}
+</script>
+{% endblock %} 
