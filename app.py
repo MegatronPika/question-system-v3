@@ -26,6 +26,11 @@ _questions_cache = None
 _questions_cache_time = 0
 CACHE_DURATION = 300  # 缓存5分钟
 
+# 用户数据缓存（避免重复计算）
+_user_stats_cache = {}
+_user_stats_cache_time = {}
+USER_STATS_CACHE_DURATION = 60  # 用户统计缓存1分钟
+
 # 确保数据目录存在
 DATA_DIR = os.path.dirname(USER_DATA_FILE) if os.path.dirname(USER_DATA_FILE) else '.'
 if not os.path.exists(DATA_DIR):
@@ -129,19 +134,47 @@ def load_user_data():
     """加载用户数据"""
     # 优先从数据库读取（如已配置）
     db_data = db_load_json('user_data')
+    
+    # 如果数据库有数据，直接返回（数据库是权威数据源）
     if db_data:
+        # 在Railway环境中，如果数据库有数据但本地文件不存在或为空，则从数据库同步到本地文件
+        if IS_RAILWAY and DB_URL:
+            try:
+                persistent_file = '/data/user_data.json'
+                # 检查本地文件是否存在且不为空
+                file_exists = os.path.exists(persistent_file)
+                file_empty = False
+                if file_exists:
+                    try:
+                        with open(persistent_file, 'r', encoding='utf-8') as f:
+                            file_content = f.read().strip()
+                            file_empty = len(file_content) == 0
+                    except:
+                        file_empty = True
+                
+                # 如果文件不存在或为空，从数据库同步
+                if not file_exists or file_empty:
+                    os.makedirs('/data', exist_ok=True)
+                    with open(persistent_file, 'w', encoding='utf-8') as f:
+                        json.dump(db_data, f, ensure_ascii=False, indent=2, default=str)
+                    print(f"Synced database data to persistent storage: {persistent_file}")
+            except Exception as e:
+                print(f"Warning: Failed to sync DB data to persistent storage: {e}")
+        
         return db_data
-    # 在Railway环境中，优先从持久化存储读取
+    
+    # 数据库没有数据，尝试从其他源加载
     if IS_RAILWAY:
-        # 尝试从持久化卷读取
+        # 在Railway环境中，尝试从持久化卷读取
         persistent_file = '/data/user_data.json'
         if os.path.exists(persistent_file):
             try:
                 with open(persistent_file, 'r', encoding='utf-8') as f:
                     file_data = json.load(f)
                     # 若DB可用但暂无数据，则用文件数据回填数据库
-                    if get_db_conn() and not db_data:
+                    if get_db_conn():
                         db_save_json('user_data', file_data)
+                        print("Synced persistent storage data to database")
                     return file_data
             except Exception as e:
                 print(f"Warning: Failed to load from persistent storage: {e}")
@@ -150,19 +183,29 @@ def load_user_data():
         env_data = os.environ.get('USER_DATA_JSON')
         if env_data:
             try:
-                return json.loads(env_data)
+                env_data_parsed = json.loads(env_data)
+                # 若DB可用，则用环境变量数据回填数据库
+                if get_db_conn():
+                    db_save_json('user_data', env_data_parsed)
+                    print("Synced environment variable data to database")
+                return env_data_parsed
             except json.JSONDecodeError:
                 print("Warning: Invalid JSON in USER_DATA_JSON environment variable")
+    else:
+        # 本地开发环境，从本地文件读取
+        if os.path.exists(USER_DATA_FILE):
+            try:
+                with open(USER_DATA_FILE, 'r', encoding='utf-8') as f:
+                    file_data = json.load(f)
+                    # 若DB可用但暂无数据，则用文件数据回填数据库
+                    if get_db_conn():
+                        db_save_json('user_data', file_data)
+                        print("Synced local file data to database")
+                    return file_data
+            except Exception as e:
+                print(f"Warning: Failed to load from local file: {e}")
     
-    # 从本地文件读取
-    if os.path.exists(USER_DATA_FILE):
-        with open(USER_DATA_FILE, 'r', encoding='utf-8') as f:
-            file_data = json.load(f)
-            # 若DB可用但暂无数据，则用文件数据回填数据库
-            if get_db_conn() and not db_data:
-                db_save_json('user_data', file_data)
-            return file_data
-    
+    # 所有数据源都没有数据，返回空结构
     return {
         'users': {},
         'user_profiles': {},
@@ -180,15 +223,18 @@ def save_user_data(data):
             data['users'][user_id]['wrong_questions'] = list(data['users'][user_id]['wrong_questions'])
         if 'important_questions' in data['users'][user_id]:
             data['users'][user_id]['important_questions'] = list(data['users'][user_id]['important_questions'])
-    
-    # 若数据库可用，同时写入数据库
-    try:
-        if get_db_conn():
-            db_save_json('user_data', data)
-    except Exception as e:
-        print(f"Warning: failed to persist to DB: {e}")
 
-    # 在Railway环境中，保存到持久化存储
+    # 优先保存到数据库（如已配置）
+    db_saved = False
+    if get_db_conn():
+        try:
+            db_save_json('user_data', data)
+            db_saved = True
+            print("Data saved to database successfully")
+        except Exception as e:
+            print(f"Warning: failed to persist to DB: {e}")
+
+    # 在Railway环境中，保存到持久化存储（作为备份）
     if IS_RAILWAY:
         try:
             # 保存到持久化卷
@@ -199,29 +245,34 @@ def save_user_data(data):
             print(f"Data saved to persistent storage: {persistent_file}")
         except Exception as e:
             print(f"Warning: Failed to save to persistent storage: {e}")
-    
-    # 保存到本地文件（确保数据持久化）
-    try:
-        # 确保目录存在
-        os.makedirs(DATA_DIR, exist_ok=True)
-        
-        # 先保存到临时文件，然后重命名（原子操作）
-        temp_file = f"{USER_DATA_FILE}.tmp"
-        with open(temp_file, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2, default=str)
-        
-        # 原子性地重命名文件
-        os.replace(temp_file, USER_DATA_FILE)
-        print(f"Data saved to local file: {USER_DATA_FILE}")
-        
-    except Exception as e:
-        print(f"Error saving user data: {e}")
-        # 如果保存失败，尝试直接保存
+
+    # 本地开发环境，保存到本地文件
+    if not IS_RAILWAY:
         try:
-            with open(USER_DATA_FILE, 'w', encoding='utf-8') as f:
+            # 确保目录存在
+            os.makedirs(DATA_DIR, exist_ok=True)
+            
+            # 先保存到临时文件，然后重命名（原子操作）
+            temp_file = f"{USER_DATA_FILE}.tmp"
+            with open(temp_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2, default=str)
-        except Exception as e2:
-            print(f"Critical error: Failed to save user data: {e2}")
+            
+            # 原子性地重命名文件
+            os.replace(temp_file, USER_DATA_FILE)
+            print(f"Data saved to local file: {USER_DATA_FILE}")
+            
+        except Exception as e:
+            print(f"Error saving user_data: {e}")
+            # 如果保存失败，尝试直接保存
+            try:
+                with open(USER_DATA_FILE, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+            except Exception as e2:
+                print(f"Critical error: Failed to save user_data: {e2}")
+    
+    # 如果数据库保存失败且不在Railway环境，记录警告
+    if not db_saved and not IS_RAILWAY:
+        print("Warning: Database not available, data only saved to local file")
 
 def get_client_ip():
     """获取客户端IP"""
@@ -359,7 +410,113 @@ def _finalize_exam_from_record(user_data, user_id, exam_record):
     exam_record['total_score'] = total_score
     exam_record['wrong_answers'] = wrong_answers
     save_user_data(user_data)
+    
+    # 清除用户统计缓存（数据已更新）
+    global _user_stats_cache
+    if user_id in _user_stats_cache:
+        del _user_stats_cache[user_id]
+    
     return total_score, wrong_answers
+
+def sync_data_sources():
+    """同步数据源，确保数据库和本地文件数据一致"""
+    print("Starting data synchronization...")
+    
+    # 获取数据库数据
+    db_data = db_load_json('user_data')
+    
+    # 获取本地文件数据
+    local_data = None
+    if os.path.exists(USER_DATA_FILE):
+        try:
+            with open(USER_DATA_FILE, 'r', encoding='utf-8') as f:
+                local_data = json.load(f)
+        except Exception as e:
+            print(f"Failed to load local file: {e}")
+    
+    # 获取Railway持久化存储数据
+    railway_data = None
+    if IS_RAILWAY:
+        persistent_file = '/data/user_data.json'
+        if os.path.exists(persistent_file):
+            try:
+                with open(persistent_file, 'r', encoding='utf-8') as f:
+                    railway_data = json.load(f)
+            except Exception as e:
+                print(f"Failed to load Railway persistent storage: {e}")
+    
+    # 确定权威数据源（优先级：数据库 > Railway持久化 > 本地文件）
+    authoritative_data = None
+    if db_data:
+        authoritative_data = db_data
+        print("Using database as authoritative source")
+    elif railway_data:
+        authoritative_data = railway_data
+        print("Using Railway persistent storage as authoritative source")
+    elif local_data:
+        authoritative_data = local_data
+        print("Using local file as authoritative source")
+    else:
+        print("No data found in any source")
+        return False
+    
+    # 同步到所有可用的存储位置
+    success = True
+    
+    # 同步到数据库
+    if get_db_conn():
+        try:
+            db_save_json('user_data', authoritative_data)
+            print("✓ Synced to database")
+        except Exception as e:
+            print(f"✗ Failed to sync to database: {e}")
+            success = False
+    
+    # 同步到Railway持久化存储
+    if IS_RAILWAY:
+        try:
+            persistent_file = '/data/user_data.json'
+            os.makedirs('/data', exist_ok=True)
+            with open(persistent_file, 'w', encoding='utf-8') as f:
+                json.dump(authoritative_data, f, ensure_ascii=False, indent=2, default=str)
+            print("✓ Synced to Railway persistent storage")
+        except Exception as e:
+            print(f"✗ Failed to sync to Railway persistent storage: {e}")
+            success = False
+    
+    # 同步到本地文件（如果不是Railway环境）
+    if not IS_RAILWAY:
+        try:
+            os.makedirs(DATA_DIR, exist_ok=True)
+            with open(USER_DATA_FILE, 'w', encoding='utf-8') as f:
+                json.dump(authoritative_data, f, ensure_ascii=False, indent=2, default=str)
+            print("✓ Synced to local file")
+        except Exception as e:
+            print(f"✗ Failed to sync to local file: {e}")
+            success = False
+    
+    # 清除缓存
+    global _user_stats_cache, _user_stats_cache_time
+    _user_stats_cache.clear()
+    _user_stats_cache_time.clear()
+    print("✓ Cleared user stats cache")
+    
+    print(f"Data synchronization {'completed successfully' if success else 'completed with errors'}")
+    return success
+
+@app.route('/admin/sync_data', methods=['POST'])
+def admin_sync_data():
+    """管理员接口：手动同步数据源"""
+    # 简单的管理员验证（可以改进）
+    admin_token = request.headers.get('X-Admin-Token')
+    if admin_token != 'sync_2024':
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    success = sync_data_sources()
+    return jsonify({
+        'success': success,
+        'message': 'Data synchronization completed' if success else 'Data synchronization failed'
+    })
 
 @app.route('/')
 def index():
@@ -482,25 +639,32 @@ def get_random_question():
 	except (TypeError, ValueError):
 		type_filter = 0
 	
+	# 使用缓存的题库数据
 	questions = load_questions()
 	user_data, user_id = get_user_data()
 	
 	if not user_data or not user_id:
 		return jsonify({'error': '用户数据不存在'})
 	
+	# 使用缓存的用户统计（避免重复计算）
+	user_stats = get_user_stats_cached(user_id)
+	if not user_stats:
+		return jsonify({'error': '用户数据不存在'})
+	
+	answered = user_stats['answered_questions']
+	wrong_questions = user_stats['wrong_questions']
+	important_set = user_stats['important_questions']
+	
 	if mode == 'unanswered':
-		answered = user_data['users'][user_id]['answered_questions']
 		available_questions = [q for q in questions if q['id'] not in answered]
 		if not available_questions:
 			return jsonify({'error': '已刷完所有题库，请选择全量题库或者错题库进行练习'})
 	elif mode == 'wrong':
-		wrong_questions = user_data['users'][user_id]['wrong_questions']
 		available_questions = [q for q in questions if q['id'] in wrong_questions]
 		if not available_questions:
 			return jsonify({'error': '暂无错题记录'})
 	elif mode == 'important':
-		important = user_data['users'][user_id].get('important_questions', set())
-		available_questions = [q for q in questions if q['id'] in important]
+		available_questions = [q for q in questions if q['id'] in important_set]
 		if not available_questions:
 			return jsonify({'error': '暂无重点题，请在题目详情中标记后再来试试'})
 	else:
@@ -515,11 +679,15 @@ def get_random_question():
 	question = random.choice(available_questions)
 	
 	# 如果是未做题库模式，立即将该题目标记为已做，避免重复
+	# 每道题都要保存，确保数据不丢失
 	if mode == 'unanswered':
 		user_data['users'][user_id]['answered_questions'].add(question['id'])
 		save_user_data(user_data)
+		# 清除用户统计缓存，确保下次获取时数据一致
+		global _user_stats_cache
+		if user_id in _user_stats_cache:
+			del _user_stats_cache[user_id]
 	
-	important_set = user_data['users'][user_id].get('important_questions', set())
 	return jsonify({
 		'id': question['id'],
 		'number': question.get('number'),
@@ -724,19 +892,15 @@ def get_wrong_questions():
     questions = load_questions()
     questions_dict = {q['id']: q for q in questions}
     
-    # 统计每个题目的做错次数
-    question_wrong_count = {}
-    for record in wrong_records:
-        question_id = record['question_id']
-        if question_id not in question_wrong_count:
-            question_wrong_count[question_id] = 0
-        question_wrong_count[question_id] += 1
-    
     # 为每个错题记录添加做错次数和完整题目信息
     for record in wrong_records:
         question_id = record['question_id']
-        # 使用从wrong_records统计的实际做错次数，而不是从wrong_count字段
-        record['wrong_count'] = question_wrong_count[question_id]
+        # 使用缓存的错题次数统计
+        user_stats = get_user_stats_cached(user_id)
+        if user_stats:
+            record['wrong_count'] = user_stats['wrong_count_map'].get(question_id, 0)
+        else:
+            record['wrong_count'] = 0
         
         # 添加完整的题目信息
         if question_id in questions_dict:
@@ -793,86 +957,84 @@ def get_question_bank():
     if not user_data or not user_id:
         return jsonify({'error': '用户数据不存在'})
     
-    # 获取用户答题信息
-    answered_questions = user_data['users'][user_id]['answered_questions']
-    wrong_questions = user_data['users'][user_id]['wrong_questions']
-    wrong_count = user_data['users'][user_id].get('wrong_count', {})
-    important_set = user_data['users'][user_id].get('important_questions', set())
+    # 使用缓存的用户统计
+    user_stats = get_user_stats_cached(user_id)
+    if not user_stats:
+        return jsonify({'error': '用户数据不存在'})
     
-    # 获取错题记录的时间信息
-    wrong_records = user_data['wrong_questions'][user_id]
-    wrong_times = {}
-    for record in wrong_records:
-        question_id = record['question_id']
-        if question_id not in wrong_times:
-            wrong_times[question_id] = record['timestamp']
+    answered_questions = user_stats['answered_questions']
+    wrong_questions = user_stats['wrong_questions']
+    important_set = user_stats['important_questions']
+    wrong_count_map = user_stats['wrong_count_map']
+    wrong_times = user_stats['wrong_times']
+    
+    # 按题型预分组题目（避免重复遍历）
+    questions_by_type = {1: [], 2: [], 3: []}
+    for question in questions:
+        questions_by_type[question['type']].append(question)
     
     # 处理每个题目，添加用户状态信息
     processed_questions = []
-    for question in questions:
-        question_id = question['id']
-        is_answered = question_id in answered_questions
-        is_wrong = question_id in wrong_questions
-        
-        # 计算做错次数
-        wrong_count_num = 0
-        if is_wrong:
-            # 从错题记录中统计实际做错次数
-            for record in wrong_records:
-                if record['question_id'] == question_id:
-                    wrong_count_num += 1
-        
-        # 获取最后做题时间
-        last_answered_time = None
-        if is_answered:
-            if question_id in wrong_times:
-                last_answered_time = wrong_times[question_id]
-            else:
-                # 如果没有错题记录，说明是做对的，使用当前时间作为默认值
-                last_answered_time = datetime.datetime.now().isoformat()
-        
-        # 格式化时间显示
-        if last_answered_time:
-            try:
-                dt = datetime.datetime.fromisoformat(last_answered_time.replace('Z', '+00:00'))
-                last_answered_time = dt.strftime('%Y-%m-%d %H:%M')
-            except:
-                last_answered_time = last_answered_time[:16]  # 简单截取
-        
-        processed_question = {
-            'id': question['id'],
-            'number': question.get('number'),
-            'type': question['type'],
-            'is_answered': is_answered,
-            'is_wrong': is_wrong,
-            'wrong_count': wrong_count_num,
-            'last_answered_time': last_answered_time,
-            'is_important': question_id in important_set
-        }
-        
-        # 应用筛选条件
-        include_question = True
-        
-        # 题型筛选
-        if type_filter != 'all' and str(question['type']) != type_filter:
-            include_question = False
-        
-        # 状态筛选
-        if status_filter == 'unanswered' and is_answered:
-            include_question = False
-        elif status_filter == 'correct' and (not is_answered or is_wrong):
-            include_question = False
-        elif status_filter == 'wrong' and not is_wrong:
-            include_question = False
-        elif status_filter == 'frequent_wrong' and (not is_wrong or wrong_count_num < 3):
-            include_question = False
-        elif status_filter == 'important' and (question_id not in important_set):
-            include_question = False
-        
-        if include_question:
-            processed_questions.append(processed_question)
+    for q_type, type_questions in questions_by_type.items():
+        for question in type_questions:
+            question_id = question['id']
+            is_answered = question_id in answered_questions
+            is_wrong = question_id in wrong_questions
+            
+            # 计算做错次数
+            wrong_count_num = wrong_count_map.get(question_id, 0)
+            
+            # 获取最后做题时间
+            last_answered_time = None
+            if is_answered:
+                if question_id in wrong_times:
+                    last_answered_time = wrong_times[question_id]
+                else:
+                    # 如果没有错题记录，说明是做对的，使用当前时间作为默认值
+                    last_answered_time = datetime.datetime.now().isoformat()
+            
+            # 格式化时间显示
+            if last_answered_time:
+                try:
+                    dt = datetime.datetime.fromisoformat(last_answered_time.replace('Z', '+00:00'))
+                    last_answered_time = dt.strftime('%Y-%m-%d %H:%M')
+                except:
+                    last_answered_time = last_answered_time[:16]  # 简单截取
+            
+            processed_question = {
+                'id': question['id'],
+                'number': question.get('number'),
+                'type': question['type'],
+                'is_answered': is_answered,
+                'is_wrong': is_wrong,
+                'wrong_count': wrong_count_num,
+                'last_answered_time': last_answered_time,
+                'is_important': question_id in important_set
+            }
+            
+            # 应用筛选条件
+            include_question = True
+            
+            # 题型筛选
+            if type_filter != 'all' and str(q_type) != type_filter:
+                include_question = False
+            
+            # 状态筛选
+            if status_filter == 'unanswered' and is_answered:
+                include_question = False
+            elif status_filter == 'correct' and (not is_answered or is_wrong):
+                include_question = False
+            elif status_filter == 'wrong' and not is_wrong:
+                include_question = False
+            elif status_filter == 'frequent_wrong' and (not is_wrong or wrong_count_num < 3):
+                include_question = False
+            elif status_filter == 'important' and (question_id not in important_set):
+                include_question = False
+            
+            if include_question:
+                processed_questions.append(processed_question)
     
-    # 根据题型分类并分别排序
+    # 按题型分组并排序
     by_type = {1: [], 2: [], 3: []}
     for q in processed_questions:
         by_type[q['type']].append(q)
@@ -933,18 +1095,16 @@ def get_important_bank():
     if not user_data or not user_id:
         return jsonify({'error': '用户数据不存在'})
 
-    answered = user_data['users'][user_id].get('answered_questions', set())
-    wrong_set = user_data['users'][user_id].get('wrong_questions', set())
-    important_set = user_data['users'][user_id].get('important_questions', set())
-    wrong_records = user_data['wrong_questions'][user_id]
-
-    # 统计错题次数与最后时间
-    wrong_times = {}
-    wrong_count_map = {}
-    for record in wrong_records:
-        qid = record['question_id']
-        wrong_times.setdefault(qid, record['timestamp'])
-        wrong_count_map[qid] = wrong_count_map.get(qid, 0) + 1
+    # 使用缓存的用户统计
+    user_stats = get_user_stats_cached(user_id)
+    if not user_stats:
+        return jsonify({'error': '用户数据不存在'})
+    
+    answered = user_stats['answered_questions']
+    wrong_set = user_stats['wrong_questions']
+    important_set = user_stats['important_questions']
+    wrong_count_map = user_stats['wrong_count_map']
+    wrong_times = user_stats['wrong_times']
 
     processed = []
     for q in questions:
@@ -1128,18 +1288,22 @@ def get_user_stats():
     questions = load_questions()
     total_questions = len(questions)
     
-    # 计算统计数据
-    answered_count = len(user_data['users'][user_id]['answered_questions'])
-    wrong_count = len(user_data['users'][user_id]['wrong_questions'])
+    # 使用缓存的用户统计
+    user_stats = get_user_stats_cached(user_id)
+    if not user_stats:
+        return jsonify({'success': False, 'message': '用户数据不存在'})
+    
+    answered_count = len(user_stats['answered_questions'])
+    wrong_count = len(user_stats['wrong_questions'])
     unanswered_count = total_questions - answered_count
     
     # 获取考试记录数量
-    exam_count = len(user_data['exam_records'][user_id])
+    exam_count = len(user_stats['exam_records'])
     
     # 计算平均分数
     avg_score = 0
     if exam_count > 0:
-        total_score = sum(record.get('total_score', 0) for record in user_data['exam_records'][user_id] if record.get('status') == 'completed')
+        total_score = sum(record.get('total_score', 0) for record in user_stats['exam_records'] if record.get('status') == 'completed')
         avg_score = round(total_score / exam_count, 1)
     
     stats = {
@@ -1150,6 +1314,23 @@ def get_user_stats():
         'exam_count': exam_count,
         'avg_score': avg_score
     }
+    
+    return jsonify({'success': True, 'stats': stats})
+
+@app.route('/get_user_stats_cached', methods=['POST'])
+@require_login
+def get_user_stats_cached_endpoint():
+    """获取用户统计数据（带缓存）"""
+    data = request.get_json()
+    user_id = data.get('user_id')
+    
+    if not user_id:
+        return jsonify({'success': False, 'message': '用户ID不能为空'})
+    
+    stats = get_user_stats_cached(user_id)
+    
+    if stats is None:
+        return jsonify({'success': False, 'message': '用户数据不存在或统计信息不可用'})
     
     return jsonify({'success': True, 'stats': stats})
 

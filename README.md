@@ -48,11 +48,26 @@ python run.py
 ## 数据持久化
 
 系统的数据读写优先级：
-1) Postgres（`DATABASE_URL` 存在时启用，表：`kv_store(key TEXT PRIMARY KEY, value TEXT)`，键：`user_data`）
-2) Railway 持久化卷文件：`/data/user_data.json`
-3) 本地文件：`user_data.json`
+1) **Postgres**（`DATABASE_URL` 存在时启用，表：`kv_store(key TEXT PRIMARY KEY, value TEXT)`，键：`user_data`）
+2) **Railway 持久化卷文件**：`/data/user_data.json`
+3) **本地文件**：`user_data.json`
 
-保存时会同时尝试写入 DB 与文件，确保冗余；首次如 DB 为空，会用文件数据自动回填。
+### 数据流机制
+
+**读取时**：
+- 优先从数据库读取（权威数据源）
+- 数据库有数据时，自动同步到本地文件（Railway环境）
+- 数据库无数据时，从文件/环境变量回填到数据库
+
+**保存时**：
+- 优先保存到数据库
+- Railway环境：同时保存到持久化卷作为备份
+- 本地环境：同时保存到本地文件
+
+**数据一致性**：
+- 数据库是权威数据源，重启后数据不会丢失
+- 文件主要用于备份和初始化
+- 支持手动数据同步：`POST /admin/sync_data`（需要 `X-Admin-Token: sync_2024`）
 
 ### 备份与恢复
 
@@ -63,6 +78,12 @@ python run.py
 curl -H "X-Backup-Key: question_bank_backup_2025" \
      https://your-app.railway.app/api/backup \
      -o user_data_backup.json
+```
+
+- 手动数据同步：
+```bash
+curl -X POST -H "X-Admin-Token: sync_2024" \
+     https://your-app.railway.app/admin/sync_data
 ```
 
 ## 安全更新与运维
@@ -97,4 +118,4 @@ new/
 
 ## 许可证
 
-MIT License
+MIT License# question-system-v4
